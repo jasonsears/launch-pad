@@ -28,6 +28,8 @@ export interface ResumeVersion {
 }
 
 export enum ApplicationStatus {
+  VIEWED = 'VIEWED',
+  PLAN_TO_APPLY = 'PLAN_TO_APPLY',
   APPLIED = 'APPLIED',
   INTERVIEWING = 'INTERVIEWING',
   TECHNICAL_INTERVIEW = 'TECHNICAL_INTERVIEW',
