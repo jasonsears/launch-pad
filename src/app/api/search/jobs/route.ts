@@ -107,8 +107,46 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Job search API error:', error);
+    
+    // Handle specific error types for axios errors
+    if (error && typeof error === 'object' && 'response' in error) {
+      const axiosError = error as { response?: { status: number; data?: unknown } };
+      const status = axiosError.response?.status;
+      
+      console.log('Detected axios error with status:', status);
+      
+      if (status === 429) {
+        return NextResponse.json({
+          error: 'Search rate limit exceeded',
+          message: 'You have exceeded the Google Custom Search API rate limit. Please wait a few minutes before searching again.',
+          code: 'RATE_LIMIT_EXCEEDED',
+          retryAfter: 60000 // 1 minute
+        }, { status: 429 });
+      }
+      
+      if (status === 403) {
+        return NextResponse.json({
+          error: 'API access forbidden',
+          message: 'Google Custom Search API access is forbidden. Please check your API key and search engine configuration.',
+          code: 'API_ACCESS_DENIED'
+        }, { status: 403 });
+      }
+      
+      if (status === 400) {
+        return NextResponse.json({
+          error: 'Invalid search request',
+          message: 'The search request was invalid. Please check your search terms and filters.',
+          code: 'INVALID_REQUEST'
+        }, { status: 400 });
+      }
+    }
+    
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { 
+        error: 'Search service temporarily unavailable',
+        message: 'Unable to perform search at this time. Please try again later.',
+        code: 'SERVICE_ERROR'
+      },
       { status: 500 }
     );
   }

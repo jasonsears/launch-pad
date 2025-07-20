@@ -115,6 +115,7 @@ const JobSearchPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [lastSearchTime, setLastSearchTime] = useState<number>(0);
   const [savedSearchDialog, setSavedSearchDialog] = useState<{ isOpen: boolean; mode: 'save' | 'load' }>({
     isOpen: false,
     mode: 'save'
@@ -143,6 +144,15 @@ const JobSearchPage = () => {
       return;
     }
     
+    // Rate limiting: prevent searches more frequent than every 2 seconds
+    const now = Date.now();
+    if (now - lastSearchTime < 2000) {
+      setError('Please wait a moment before searching again');
+      return;
+    }
+    
+    setLastSearchTime(now);
+    
     // Update URL with current search state
     updateURLState({ query, filters, replace: true });
     
@@ -163,7 +173,25 @@ const JobSearchPage = () => {
       });
 
       if (!response.ok) {
-        throw new Error(`Search failed: ${response.status}`);
+        // Try to get the error details from the response
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch {
+          // If we can't parse the error response, use a generic message
+          throw new Error(`Search failed with status ${response.status}`);
+        }
+        
+        // Handle specific error types
+        if (errorData.code === 'RATE_LIMIT_EXCEEDED') {
+          throw new Error('Search rate limit exceeded. Please wait a few minutes before searching again.');
+        } else if (errorData.code === 'API_ACCESS_DENIED') {
+          throw new Error('Search service configuration error. Please contact support.');
+        } else if (errorData.code === 'INVALID_REQUEST') {
+          throw new Error('Invalid search request. Please check your search terms and try again.');
+        } else {
+          throw new Error(errorData.message || 'Search service temporarily unavailable. Please try again later.');
+        }
       }
 
       const data = await response.json();
@@ -177,10 +205,39 @@ const JobSearchPage = () => {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to fetch job results. Please try again.';
       setError(errorMessage);
+      
+      // If rate limited, show mock data for demo purposes
+      if (errorMessage.includes('rate limit')) {
+        setResults([
+          {
+            title: `${query} - Senior Position (Demo)`,
+            link: 'https://example.com/job1',
+            snippet: `Sample job posting for ${query}. This is demo data shown because the search API has reached its rate limit. Requirements include relevant experience and skills.`,
+            displayLink: 'linkedin.com'
+          },
+          {
+            title: `${query} - Entry Level (Demo)`,
+            link: 'https://example.com/job2', 
+            snippet: `Entry-level position for ${query}. Demo data to show interface functionality while API limit is active. Great opportunity for recent graduates.`,
+            displayLink: 'indeed.com'
+          },
+          {
+            title: `${query} - Remote Opportunity (Demo)`,
+            link: 'https://example.com/job3',
+            snippet: `Remote ${query} position. This is sample data displayed due to API rate limiting. Flexible work arrangements and competitive benefits.`,
+            displayLink: 'remote.co'
+          }
+        ]);
+        setSearchMetadata({
+          originalCount: 3,
+          filteredCount: 3,
+          searchQuery: `Demo results for: ${query}`
+        });
+      }
     } finally {
       setLoading(false);
     }
-  }, [query, filters, updateURLState]);
+  }, [query, filters, updateURLState, lastSearchTime]);
 
   // Auto-search when URL has query parameter on initial load
   useEffect(() => {
@@ -689,9 +746,17 @@ const JobSearchPage = () => {
 
           {/* Error Message */}
           {error && (
-            <Card className="mb-6 border-red-200 bg-red-50">
+            <Card className={`mb-6 ${error.includes('rate limit') ? 'border-yellow-200 bg-yellow-50' : 'border-red-200 bg-red-50'}`}>
               <CardContent className="pt-6">
-                <p className="text-red-600">{error}</p>
+                <p className={error.includes('rate limit') ? 'text-yellow-700' : 'text-red-600'}>
+                  {error}
+                </p>
+                {error.includes('rate limit') && (
+                  <div className="mt-3 text-sm text-yellow-600">
+                    <p><strong>Why this happened:</strong> The Google Custom Search API has usage limits to prevent abuse.</p>
+                    <p className="mt-1"><strong>What to do:</strong> Wait a few minutes and try again, or see the demo results below.</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
