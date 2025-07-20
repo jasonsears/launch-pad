@@ -6,30 +6,85 @@ import {
   FileText, 
   Calendar, 
   CheckSquare,
-  Search
+  Search,
+  Clock
 } from 'lucide-react'
 import Link from 'next/link'
+import { prisma } from '@/lib/prisma'
 
-const dashboardStats = {
-  applications: {
-    total: 24,
-    thisWeek: 5,
-  },
-  interviews: {
-    upcoming: 2,
-    thisWeek: 3
-  },
-  tasks: {
-    pending: 7,
-    overdue: 2
-  },
-  resumes: {
-    total: 4,
-    active: 2
+async function getDashboardData() {
+  try {
+    // Get application statistics
+    const totalApplications = await prisma.application.count();
+    
+    // Applications this week
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const applicationsThisWeek = await prisma.application.count({
+      where: {
+        appliedAt: {
+          gte: oneWeekAgo
+        }
+      }
+    });
+
+    // Upcoming interviews (interviews scheduled for future dates)
+    const now = new Date();
+    const upcomingInterviews = await prisma.application.count({
+      where: {
+        interviewDate: {
+          gte: now
+        }
+      }
+    });
+
+    // Applications by status
+    const applicationsByStatus = await prisma.application.groupBy({
+      by: ['status'],
+      _count: {
+        id: true
+      }
+    });
+
+    // Recent applications (last 5)
+    const recentApplications = await prisma.application.findMany({
+      take: 5,
+      orderBy: {
+        viewedAt: 'desc'
+      },
+      include: {
+        job: true
+      }
+    });
+
+    // Convert status counts to object for easier access
+    const statusCounts = applicationsByStatus.reduce((acc, item) => {
+      acc[item.status] = item._count.id;
+      return acc;
+    }, {} as Record<string, number>);
+
+    return {
+      totalApplications,
+      applicationsThisWeek,
+      upcomingInterviews,
+      statusCounts,
+      recentApplications
+    };
+  } catch (error) {
+    console.error('Error fetching dashboard data:', error);
+    return {
+      totalApplications: 0,
+      applicationsThisWeek: 0,
+      upcomingInterviews: 0,
+      statusCounts: {},
+      recentApplications: []
+    };
   }
 }
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const dashboardData = await getDashboardData();
+
   return (
     <div className="min-h-screen bg-slate-50">
       <Navigation />
@@ -50,9 +105,9 @@ export default function DashboardPage() {
                 <Briefcase className="h-4 w-4 text-slate-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{dashboardStats.applications.total}</div>
+                <div className="text-2xl font-bold">{dashboardData.totalApplications}</div>
                 <p className="text-xs text-slate-600">
-                  +{dashboardStats.applications.thisWeek} this week
+                  +{dashboardData.applicationsThisWeek} this week
                 </p>
               </CardContent>
             </Card>
@@ -63,39 +118,148 @@ export default function DashboardPage() {
                 <Calendar className="h-4 w-4 text-slate-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{dashboardStats.interviews.upcoming}</div>
+                <div className="text-2xl font-bold">{dashboardData.upcomingInterviews}</div>
                 <p className="text-xs text-slate-600">
-                  {dashboardStats.interviews.thisWeek} this week
+                  scheduled ahead
                 </p>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Pending Tasks</CardTitle>
+                <CardTitle className="text-sm font-medium">Applied</CardTitle>
                 <CheckSquare className="h-4 w-4 text-slate-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{dashboardStats.tasks.pending}</div>
+                <div className="text-2xl font-bold">{dashboardData.statusCounts.APPLIED || 0}</div>
                 <p className="text-xs text-slate-600">
-                  {dashboardStats.tasks.overdue} overdue
+                  applications submitted
                 </p>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Active Resumes</CardTitle>
-                <FileText className="h-4 w-4 text-slate-600" />
+                <CardTitle className="text-sm font-medium">In Progress</CardTitle>
+                <Clock className="h-4 w-4 text-slate-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{dashboardStats.resumes.active}</div>
+                <div className="text-2xl font-bold">
+                  {(dashboardData.statusCounts.INTERVIEWING || 0) + (dashboardData.statusCounts.TECHNICAL_INTERVIEW || 0)}
+                </div>
                 <p className="text-xs text-slate-600">
-                  of {dashboardStats.resumes.total} total
+                  interviewing
                 </p>
               </CardContent>
             </Card>
           </div>
+
+          {/* Recent Applications Section */}
+          {dashboardData.recentApplications.length > 0 ? (
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle>Recent Applications</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {dashboardData.recentApplications.map((application) => (
+                    <div key={application.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                      <div className="flex-1">
+                        <h4 className="font-medium text-slate-900">{application.position}</h4>
+                        <p className="text-sm text-slate-600">{application.company}</p>
+                        <p className="text-xs text-slate-500">
+                          Viewed: {application.viewedAt ? new Date(application.viewedAt).toLocaleDateString() : 'N/A'}
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end">
+                        <span className={`px-2 py-1 text-xs rounded-full ${
+                          application.status === 'APPLIED' ? 'bg-green-100 text-green-700' :
+                          application.status === 'INTERVIEWING' ? 'bg-purple-100 text-purple-700' :
+                          application.status === 'TECHNICAL_INTERVIEW' ? 'bg-indigo-100 text-indigo-700' :
+                          application.status === 'OFFER' ? 'bg-emerald-100 text-emerald-700' :
+                          application.status === 'REJECTED' ? 'bg-red-100 text-red-700' :
+                          'bg-gray-100 text-gray-700'
+                        }`}>
+                          {application.status.replace('_', ' ')}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4">
+                  <Link href="/applications">
+                    <Button variant="outline" className="w-full">
+                      View All Applications
+                    </Button>
+                  </Link>
+                </div>
+              </CardContent>
+            </Card>
+          ) : dashboardData.totalApplications === 0 && (
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle>Get Started</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-center py-8">
+                  <Search className="h-12 w-12 text-slate-400 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-slate-900 mb-2">Start Your Job Search</h3>
+                  <p className="text-slate-600 mb-4">
+                    Begin by searching for jobs that match your interests. You can save applications and track your progress.
+                  </p>
+                  <Link href="/job-search">
+                    <Button>
+                      Search for Jobs
+                    </Button>
+                  </Link>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Application Pipeline Section */}
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Application Pipeline</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-gray-600">{dashboardData.statusCounts.VIEWED || 0}</div>
+                  <div className="text-xs text-gray-500">Viewed</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-600">{dashboardData.statusCounts.PLAN_TO_APPLY || 0}</div>
+                  <div className="text-xs text-blue-500">Plan to Apply</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-600">{dashboardData.statusCounts.APPLIED || 0}</div>
+                  <div className="text-xs text-green-500">Applied</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-purple-600">{dashboardData.statusCounts.INTERVIEWING || 0}</div>
+                  <div className="text-xs text-purple-500">Interviewing</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-indigo-600">{dashboardData.statusCounts.TECHNICAL_INTERVIEW || 0}</div>
+                  <div className="text-xs text-indigo-500">Technical</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-emerald-600">{dashboardData.statusCounts.OFFER || 0}</div>
+                  <div className="text-xs text-emerald-500">Offers</div>
+                </div>
+              </div>
+              {dashboardData.totalApplications > 0 && (
+                <div className="mt-4 text-center">
+                  <p className="text-sm text-slate-600">
+                    Success Rate: {dashboardData.statusCounts.OFFER ? 
+                      Math.round((dashboardData.statusCounts.OFFER / dashboardData.totalApplications) * 100) : 0}% 
+                    (Offers / Total Applications)
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           <Card className="mt-6">
             <CardHeader>
