@@ -43,10 +43,15 @@ A comprehensive web application designed to help job seekers—particularly rece
   - [x] Saved searches: Save, load, and update search queries and filters
   - [x] Visual indicators for loaded/active saved search
   - [x] Programmatic job board filtering for SaaS flexibility
-- [x] **Application Tracker** (schema in place, UI coming soon)
+  - [x] **URL-based state management**: Search results persist across navigation
+  - [x] **Session persistence**: Saved job indicators survive page refresh
+  - [x] **Smart navigation**: Return to active search from Applications page
+- [x] **Application Tracker**
   - [x] Application model in database
+  - [x] Save jobs from search results with one-click tracking
+  - [x] Application list view showing saved jobs with status
+  - [x] Smart back navigation to preserve search state
   - [ ] Application form (company, position, status, dates)
-  - [ ] Application list view with filtering
   - [ ] Application detail view with notes
   - [ ] Status update functionality
 - [x] **Resume Manager** (schema in place, UI coming soon)
@@ -111,8 +116,43 @@ A comprehensive web application designed to help job seekers—particularly rece
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+- Node.js (v18 or higher)
+- npm, yarn, pnpm, or bun
 
+### Installation
+
+1. **Clone the repository**
+```bash
+git clone https://github.com/jasonsears/launch-pad.git
+cd launch-pad
+```
+
+2. **Install dependencies**
+```bash
+npm install
+# or
+yarn install
+# or
+pnpm install
+```
+
+3. **Set up environment variables**
+```bash
+cp .env.example .env
+```
+Then edit `.env` and add your Google Custom Search API credentials:
+- `NEXT_PUBLIC_GOOGLE_API_KEY`: Get from [Google Cloud Console](https://console.developers.google.com/)
+- `NEXT_PUBLIC_GOOGLE_CSE_ID`: Create a Custom Search Engine at [Google CSE](https://cse.google.com/)
+
+4. **Set up the database**
+```bash
+# Generate Prisma client and create database
+npx prisma generate
+npx prisma db push
+```
+
+5. **Run the development server**
 ```bash
 npm run dev
 # or
@@ -125,9 +165,26 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Database Management
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The project uses SQLite with Prisma ORM. Each developer gets their own local `dev.db` file.
+
+**Common commands:**
+```bash
+# Apply schema changes to database
+npx prisma db push
+
+# Reset database (WARNING: deletes all data)
+npx prisma db push --force-reset
+
+# View database in browser
+npx prisma studio
+
+# Generate Prisma client after schema changes
+npx prisma generate
+```
+
+**Note:** The `dev.db` file is not tracked in Git. Each developer will have their own local database.
 
 ## Learn More
 
