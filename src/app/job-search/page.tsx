@@ -24,15 +24,18 @@ const JobSearchPage = () => {
     const filtersParam = searchParams.get('filters');
     if (filtersParam) {
       try {
-        return JSON.parse(filtersParam);
-      } catch {
+        const parsed = JSON.parse(filtersParam);
+        console.log('🔍 Loaded filters from URL:', parsed);
+        return parsed;
+      } catch (error) {
+        console.error('❌ Failed to parse filters from URL:', error, 'Raw:', filtersParam);
         // If parsing fails, return default filters
       }
     }
     return {
       location: '',
       remote: false,
-      entryLevel: false,
+      // entryLevel: false, // removed
       jobType: [],
       experienceLevel: undefined,
       sites: [],
@@ -116,6 +119,7 @@ const JobSearchPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [lastSearchTime, setLastSearchTime] = useState<number>(0);
+  const [currentRequestController, setCurrentRequestController] = useState<AbortController | null>(null);
   const [savedSearchDialog, setSavedSearchDialog] = useState<{ isOpen: boolean; mode: 'save' | 'load' }>({
     isOpen: false,
     mode: 'save'
@@ -151,6 +155,15 @@ const JobSearchPage = () => {
       return;
     }
     
+    // Cancel any existing request
+    if (currentRequestController) {
+      currentRequestController.abort();
+    }
+    
+    // Create new abort controller for this request
+    const newController = new AbortController();
+    setCurrentRequestController(newController);
+    
     setLastSearchTime(now);
     
     // Update URL with current search state
@@ -170,6 +183,7 @@ const JobSearchPage = () => {
           filters,
           userId: 'free-user' // Default for now
         }),
+        signal: newController.signal, // Add abort signal
       });
 
       if (!response.ok) {
@@ -195,14 +209,23 @@ const JobSearchPage = () => {
       }
 
       const data = await response.json();
-      setResults(data.items || []);
-      setSearchQuery(data.searchQuery || query);
-      setSearchMetadata({
-        originalCount: data.config?.originalCount,
-        filteredCount: data.config?.filteredCount,
-        searchQuery: data.searchQuery
-      });
+      
+      // Only update state if this request wasn't aborted
+      if (!newController.signal.aborted) {
+        setResults(data.items || []);
+        setSearchQuery(data.searchQuery || query);
+        setSearchMetadata({
+          originalCount: data.config?.originalCount,
+          filteredCount: data.config?.filteredCount,
+          searchQuery: data.searchQuery
+        });
+      }
     } catch (error) {
+      // Don't show error if request was aborted (user started new search)
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
+      
       const errorMessage = error instanceof Error ? error.message : 'Failed to fetch job results. Please try again.';
       setError(errorMessage);
       
@@ -235,17 +258,118 @@ const JobSearchPage = () => {
         });
       }
     } finally {
-      setLoading(false);
+      // Only update loading state if this request wasn't aborted
+      if (!newController.signal.aborted) {
+        setLoading(false);
+        setCurrentRequestController(null);
+      }
     }
-  }, [query, filters, updateURLState, lastSearchTime]);
+  }, [query, filters, updateURLState, lastSearchTime, currentRequestController]);
 
   // Auto-search when URL has query parameter on initial load
   useEffect(() => {
     const urlQuery = getQueryFromURL();
-    if (urlQuery && results.length === 0 && !loading) {
-      handleSearch();
+    if (urlQuery && results.length === 0 && !loading && !error) {
+      // Create a local search function to avoid dependency issues
+      const performSearch = async () => {
+        if (!urlQuery.trim()) {
+          setError('Please enter a search term');
+          return;
+        }
+        
+        // Rate limiting: prevent searches more frequent than every 2 seconds
+        const now = Date.now();
+        if (now - lastSearchTime < 2000) {
+          return; // Skip auto-search if too recent
+        }
+        
+        // Cancel any existing request
+        if (currentRequestController) {
+          currentRequestController.abort();
+        }
+        
+        // Create new abort controller for this request
+        const autoController = new AbortController();
+        setCurrentRequestController(autoController);
+        
+        setLastSearchTime(now);
+        setLoading(true);
+        setError(null);
+        
+        try {
+          const response = await fetch('/api/search/jobs', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              query: urlQuery,
+              filters: getFiltersFromURL(),
+              userId: 'free-user'
+            }),
+            signal: autoController.signal, // Add abort signal
+          });
+
+          if (!response.ok) {
+            let errorData;
+            try {
+              errorData = await response.json();
+            } catch {
+              throw new Error(`Search failed with status ${response.status}`);
+            }
+            
+            if (errorData.code === 'RATE_LIMIT_EXCEEDED') {
+              throw new Error('Search rate limit exceeded. Please wait a few minutes before searching again.');
+            } else if (errorData.code === 'API_ACCESS_DENIED') {
+              throw new Error('Search service configuration error. Please contact support.');
+            } else if (errorData.code === 'INVALID_REQUEST') {
+              throw new Error('Invalid search request. Please check your search terms and try again.');
+            } else {
+              throw new Error(errorData.message || 'Search service temporarily unavailable. Please try again later.');
+            }
+          }
+
+          const data = await response.json();
+          
+          // Only update state if this request wasn't aborted
+          if (!autoController.signal.aborted) {
+            setResults(data.items || []);
+            setSearchQuery(data.searchQuery || urlQuery);
+            setSearchMetadata({
+              originalCount: data.config?.originalCount,
+              filteredCount: data.config?.filteredCount,
+              searchQuery: data.searchQuery
+            });
+          }
+        } catch (error) {
+          // Don't show error if request was aborted
+          if (error instanceof Error && error.name === 'AbortError') {
+            return;
+          }
+          
+          const errorMessage = error instanceof Error ? error.message : 'Failed to fetch job results. Please try again.';
+          setError(errorMessage);
+        } finally {
+          // Only update loading state if this request wasn't aborted
+          if (!autoController.signal.aborted) {
+            setLoading(false);
+            setCurrentRequestController(null);
+          }
+        }
+      };
+      
+      performSearch();
     }
-  }, [getQueryFromURL, results.length, loading, handleSearch]);
+  }, [getQueryFromURL, getFiltersFromURL, results.length, loading, error, lastSearchTime, currentRequestController]);
+
+  // Cleanup: abort any pending requests when component unmounts
+  useEffect(() => {
+    return () => {
+      if (currentRequestController) {
+        currentRequestController.abort();
+      }
+    };
+  }, [currentRequestController]);
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -293,7 +417,7 @@ const JobSearchPage = () => {
     const defaultFilters = {
       location: '',
       remote: false,
-      entryLevel: false,
+      // entryLevel: false, // removed
       jobType: [],
       experienceLevel: undefined,
       sites: [],
@@ -401,7 +525,7 @@ const JobSearchPage = () => {
                         const defaultFilters = {
                           location: '',
                           remote: false,
-                          entryLevel: false,
+                          // entryLevel: false, // removed
                           jobType: [],
                           experienceLevel: undefined,
                           sites: [],
@@ -684,9 +808,12 @@ const JobSearchPage = () => {
                     <label className="flex items-center">
                       <input
                         type="checkbox"
-                        checked={filters.entryLevel || false}
+                        checked={filters.experienceLevel === 'entry'}
                         onChange={(e) => {
-                          const newFilters = {...filters, entryLevel: e.target.checked};
+                          const newFilters = {
+                            ...filters,
+                            experienceLevel: e.target.checked ? ("entry" as 'entry' | undefined) : undefined
+                          };
                           setFilters(newFilters);
                           updateURLState({ filters: newFilters });
                         }}

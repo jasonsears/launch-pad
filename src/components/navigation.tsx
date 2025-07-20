@@ -10,7 +10,8 @@ import {
   Briefcase, 
   MessageSquare, 
   CheckSquare,
-  BarChart3
+  BarChart3,
+  Activity
 } from 'lucide-react'
 
 export function Navigation() {
@@ -45,6 +46,7 @@ export function Navigation() {
     { name: 'Resumes', href: '/resumes', icon: FileText },
     { name: 'Interview Prep', href: '/interviews', icon: MessageSquare },
     { name: 'Daily Tasks', href: '/tasks', icon: CheckSquare },
+    { name: 'API Monitoring', href: '/monitoring', icon: Activity },
   ]
 
   return (
