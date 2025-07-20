@@ -1,10 +1,37 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import { DEFAULT_JOB_SITES, getEnabledJobSites } from './jobSites.config';
+import { recordApiMetric } from './apiMetrics';
+
+// Enhanced error type for better error handling
+interface EnhancedError extends Error {
+  originalError?: unknown;
+  status?: number;
+  timestamp?: string;
+  query?: string;
+}
 
 const GOOGLE_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
 const GOOGLE_CSE_ID = process.env.NEXT_PUBLIC_GOOGLE_CSE_ID;
 
+// Enhanced validation with detailed logging
 if (!GOOGLE_API_KEY || !GOOGLE_CSE_ID) {
+  console.error('🔑 Google API Configuration Error:', {
+    apiKeyStatus: GOOGLE_API_KEY ? 'Present' : 'MISSING',
+    cseIdStatus: GOOGLE_CSE_ID ? 'Present' : 'MISSING',
+    apiKeyLength: GOOGLE_API_KEY?.length || 0,
+    cseIdFormat: GOOGLE_CSE_ID ? (GOOGLE_CSE_ID.includes(':') ? 'Valid format' : 'Invalid format') : 'Missing',
+    environmentVariables: {
+      'NEXT_PUBLIC_GOOGLE_API_KEY': GOOGLE_API_KEY ? 'SET' : 'NOT_SET',
+      'NEXT_PUBLIC_GOOGLE_CSE_ID': GOOGLE_CSE_ID ? 'SET' : 'NOT_SET',
+    },
+    troubleshooting: [
+      'Check .env.local file exists in project root',
+      'Verify environment variable names are correct',
+      'Restart Next.js development server after adding env vars',
+      'Check Google Cloud Console for valid API key',
+      'Verify Custom Search Engine is properly configured'
+    ]
+  });
   throw new Error('Missing Google API Key or Custom Search Engine ID in environment variables');
 }
 
@@ -71,7 +98,6 @@ const filterJobResults = (items: Array<{ title?: string; snippet?: string; link?
 export interface JobSearchFilters {
   location?: string;
   remote?: boolean;
-  entryLevel?: boolean;
   jobType?: ('full-time' | 'part-time' | 'contract' | 'internship')[]; // Multi-select job types
   experienceLevel?: 'entry' | 'mid' | 'senior';
   sites?: string[]; // Dynamic site filtering
@@ -83,6 +109,8 @@ export interface JobSearchConfig {
   useSiteOperator?: boolean; // Toggle between programmatic vs CSE-configured sites
   customSites?: string[]; // Override default sites entirely
   userTier?: 'free' | 'premium' | 'enterprise'; // For SaaS tiers
+  useExclusions?: boolean; // Control whether to apply content exclusions (default: true)
+  customExclusions?: string[]; // Custom exclusion terms
 }
 
 export const searchJobs = async (
@@ -94,7 +122,9 @@ export const searchJobs = async (
     maxResults = 10,
     useSiteOperator = true, // Default to programmatic approach
     customSites,
-    userTier = 'free'
+    userTier = 'free',
+    useExclusions = true,
+    customExclusions
   } = config;
 
   // Build the base search query
@@ -212,8 +242,27 @@ export const searchJobs = async (
   // Combine the query with site restrictions and exclusions
   let finalQuery = searchQuery + sitesQuery;
   
-  // Add exclusions to filter out non-job content
-  finalQuery += ' -wikipedia -"about us" -"our company" -blog -news -"press release" -"company profile" -investor';
+  // Add exclusions to filter out non-job content (configurable)
+  if (useExclusions) {
+    if (customExclusions && customExclusions.length > 0) {
+      // Use custom exclusions if provided
+      const exclusions = customExclusions.map(term => `-${term}`).join(' ');
+      finalQuery += ' ' + exclusions;
+    } else {
+      // Use smart exclusions based on search specificity
+      const isSpecificSearch = searchQuery.includes('"') || 
+                              (filters.location && filters.location.trim() !== '') ||
+                              (filters.sites && filters.sites.length <= 2);
+      
+      if (isSpecificSearch) {
+        // For specific searches, use minimal exclusions to avoid over-filtering
+        finalQuery += ' -wikipedia -"about us" -"our company"';
+      } else {
+        // For broad searches, use full exclusions to filter noise
+        finalQuery += ' -wikipedia -"about us" -"our company" -blog -news -"press release" -"company profile" -investor';
+      }
+    }
+  }
   
   const params = {
     key: GOOGLE_API_KEY,
@@ -226,11 +275,86 @@ export const searchJobs = async (
     sort: 'date', // Try to get recent postings first
   };
 
+  // Enhanced logging for debugging API issues
+  console.log('🔍 Google Search API Request:', {
+    timestamp: new Date().toISOString(),
+    query: finalQuery,
+    queryLength: finalQuery.length,
+    params: {
+      ...params,
+      key: params.key ? `${params.key.substring(0, 10)}...` : 'MISSING', // Mask API key
+    },
+    config: {
+      userTier,
+      maxResults,
+      useSiteOperator,
+      sitesCount: useSiteOperator ? (customSites || filters.sites || []).length : 'CSE-configured',
+    }
+  });
+
   try {
-    const response = await axios.get('https://www.googleapis.com/customsearch/v1', { params });
+    const startTime = Date.now();
+    const response = await axios.get('https://www.googleapis.com/customsearch/v1', { 
+      params,
+      timeout: 30000, // 30 second timeout
+      headers: {
+        'User-Agent': 'LaunchPad-JobSearch/1.0',
+      }
+    });
+    const responseTime = Date.now() - startTime;
+    
+    // Enhanced success logging with quota analysis
+    const quotaHeaders = {
+      dailyQuotaUsed: response.headers['x-daily-quota-used'],
+      rateLimitRemaining: response.headers['x-ratelimit-remaining'],
+      rateLimitReset: response.headers['x-ratelimit-reset'],
+      quotaLimit: response.headers['x-quota-limit'],
+      requestsRemaining: response.headers['x-requests-remaining'],
+    };
+    
+    console.log('✅ Google Search API Success:', {
+      timestamp: new Date().toISOString(),
+      responseTime: `${responseTime}ms`,
+      totalResults: response.data.searchInformation?.totalResults || '0',
+      resultsReturned: response.data.items?.length || 0,
+      searchInformation: response.data.searchInformation,
+      quotaInfo: quotaHeaders,
+      responseHeaders: Object.keys(response.headers).filter(h => 
+        h.includes('quota') || h.includes('limit') || h.includes('rate')
+      ).reduce((obj: Record<string, unknown>, key) => {
+        obj[key] = response.headers[key];
+        return obj;
+      }, {}),
+    });
+    
+    // Check for quota warnings
+    if (quotaHeaders.dailyQuotaUsed) {
+      const quotaUsed = parseInt(quotaHeaders.dailyQuotaUsed);
+      if (quotaUsed > 80) {
+        console.warn('⚠️ High quota usage detected:', {
+          dailyQuotaUsed: quotaUsed + '%',
+          message: 'Approaching daily quota limit - this could cause intermittent failures'
+        });
+      }
+    }
     
     // Filter results to ensure they are job-related
     const filteredItems = response.data.items ? filterJobResults(response.data.items, query) : [];
+    
+    console.log('🎯 Results Processing:', {
+      originalCount: response.data.items?.length || 0,
+      filteredCount: filteredItems.length,
+      filterEfficiency: response.data.items?.length ? 
+        `${Math.round((filteredItems.length / response.data.items.length) * 100)}%` : '0%'
+    });
+    
+    // Record successful API metric
+    recordApiMetric(
+      'success',
+      responseTime,
+      query,
+      response.data.searchInformation?.totalResults || '0'
+    );
     
     return {
       ...response.data,
@@ -243,11 +367,133 @@ export const searchJobs = async (
         maxResults,
         originalCount: response.data.items?.length || 0,
         filteredCount: filteredItems.length,
+        responseTime,
+        quotaInfo: quotaHeaders,
       },
     };
-  } catch (error) {
-    console.error('Error fetching job search results:', error);
-    throw error;
+  } catch (error: unknown) {
+    // Enhanced error logging with detailed diagnosis
+    const isAxiosError = (err: unknown): err is AxiosError => {
+      return (err as AxiosError)?.isAxiosError === true;
+    };
+    
+    console.error('❌ Google Search API Error:', {
+      timestamp: new Date().toISOString(),
+      errorType: error instanceof Error ? error.constructor.name : 'Unknown',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      status: isAxiosError(error) ? error.response?.status : undefined,
+      statusText: isAxiosError(error) ? error.response?.statusText : undefined,
+      headers: isAxiosError(error) ? error.response?.headers : undefined,
+      data: isAxiosError(error) ? error.response?.data : undefined,
+      config: isAxiosError(error) ? {
+        url: error.config?.url,
+        timeout: error.config?.timeout,
+        params: error.config?.params ? {
+          ...error.config.params,
+          key: error.config.params.key ? `${error.config.params.key.substring(0, 10)}...` : 'MISSING'
+        } : undefined,
+      } : undefined,
+      requestDetails: {
+        query: finalQuery,
+        queryLength: finalQuery.length,
+        userTier,
+        maxResults,
+      }
+    });
+
+    // Specific error diagnosis and recommendations
+    if (isAxiosError(error) && error.response?.status === 403) {
+      console.error('🚫 API Access Error (403):', {
+        possibleCauses: [
+          'API key is invalid or missing',
+          'Custom Search Engine ID is invalid',
+          'API key lacks Custom Search API permissions',
+          'Daily quota exceeded',
+          'Billing not enabled on Google Cloud project'
+        ],
+        diagnosticSteps: [
+          'Verify GOOGLE_API_KEY and GOOGLE_CSE_ID in environment variables',
+          'Check Google Cloud Console > APIs & Services > Credentials',
+          'Verify Custom Search API is enabled',
+          'Check quota usage in Google Cloud Console',
+          'Ensure billing is enabled on the project'
+        ],
+        apiKeyStatus: GOOGLE_API_KEY ? 'Present' : 'MISSING',
+        cseIdStatus: GOOGLE_CSE_ID ? 'Present' : 'MISSING',
+      });
+    } else if (isAxiosError(error) && error.response?.status === 429) {
+      console.error('⏰ Rate Limit Error (429):', {
+        possibleCauses: [
+          'Too many requests per minute',
+          'Daily quota exceeded',
+          'Concurrent request limit exceeded'
+        ],
+        quotaInfo: error.response.data,
+        retryAfter: error.response.headers?.['retry-after'],
+      });
+    } else if (isAxiosError(error) && error.response?.status === 400) {
+      console.error('🔧 Bad Request Error (400):', {
+        possibleCauses: [
+          'Search query is too long',
+          'Invalid search parameters',
+          'Malformed request'
+        ],
+        queryLength: finalQuery.length,
+        queryPreview: finalQuery.substring(0, 200) + (finalQuery.length > 200 ? '...' : ''),
+        errorDetails: error.response.data,
+      });
+    } else if (isAxiosError(error) && (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED')) {
+      console.error('🌐 Network Error:', {
+        possibleCauses: [
+          'No internet connection',
+          'DNS resolution failed',
+          'Firewall blocking requests',
+          'Google API temporarily unavailable'
+        ],
+        errorCode: error.code,
+      });
+    } else if (isAxiosError(error) && error.code === 'ETIMEDOUT') {
+      console.error('⏱️ Timeout Error:', {
+        possibleCauses: [
+          'Request took longer than 30 seconds',
+          'Slow network connection',
+          'Google API performance issues'
+        ],
+        timeout: '30000ms',
+      });
+    }
+    
+    // Record failed API metric
+    const apiErrorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const statusCode = isAxiosError(error) ? error.response?.status : undefined;
+    const errorType = isAxiosError(error) ? 
+      (error.response?.status === 403 ? 'API Access Denied' :
+       error.response?.status === 429 ? 'Rate Limit' :
+       error.response?.status === 400 ? 'Bad Request' :
+       error.code === 'ETIMEDOUT' ? 'Timeout' :
+       error.code === 'ENOTFOUND' ? 'Network Error' : 'Unknown Error') : 'Unknown Error';
+    
+    recordApiMetric(
+      'error',
+      0, // No response time on error
+      query,
+      '0',
+      {
+        type: errorType,
+        message: apiErrorMessage,
+        statusCode
+      }
+    );
+    
+    // Re-throw with enhanced error context
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const enhancedError = new Error(`Google Search API failed: ${errorMessage}`) as EnhancedError;
+    enhancedError.originalError = error;
+    enhancedError.status = isAxiosError(error) ? error.response?.status : undefined;
+    enhancedError.timestamp = new Date().toISOString();
+    enhancedError.query = finalQuery;
+    
+    throw enhancedError;
   }
 };
 
