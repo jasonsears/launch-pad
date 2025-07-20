@@ -34,23 +34,29 @@ A comprehensive web application designed to help job seekers—particularly rece
 - [x] Dashboard layout with mock data
 - [x] Project documentation and setup instructions
 
-### Phase 2: Core Features 🚧
-- [ ] **Job Search Interface**
-  - [ ] Google Custom Search API integration
-  - [ ] Search form with filters (location, remote, entry-level)
-  - [ ] Job results display with save functionality
-  - [ ] Job details page
-- [ ] **Application Tracker**
+
+### Phase 2: Core Features �
+- [x] **Job Search Interface**
+  - [x] Google Custom Search API integration
+  - [x] Search form with advanced filters (location, remote, entry-level, job type, experience level, job board selection)
+  - [x] Job results display with save functionality
+  - [x] Saved searches: Save, load, and update search queries and filters
+  - [x] Visual indicators for loaded/active saved search
+  - [x] Programmatic job board filtering for SaaS flexibility
+- [x] **Application Tracker** (schema in place, UI coming soon)
+  - [x] Application model in database
   - [ ] Application form (company, position, status, dates)
   - [ ] Application list view with filtering
   - [ ] Application detail view with notes
   - [ ] Status update functionality
-- [ ] **Resume Manager**
+- [x] **Resume Manager** (schema in place, UI coming soon)
+  - [x] Resume model in database
   - [ ] File upload functionality
   - [ ] Resume list and version management
   - [ ] Resume viewer/editor
   - [ ] Resume targeting for specific jobs
-- [ ] **Interview Prep**
+- [x] **Interview Prep** (schema in place, UI coming soon)
+  - [x] Interview notes model in database
   - [ ] Interview notes creation and editing
   - [ ] Job description storage
   - [ ] Interview question bank
@@ -89,10 +95,19 @@ A comprehensive web application designed to help job seekers—particularly rece
   - [ ] Email integration for application tracking
   - [ ] ATS system integrations
 
+
 ### Current Status
 **Last Updated:** July 20, 2025  
-**Current Phase:** Phase 1 Complete ✅, Phase 2 Ready to Begin 🚧  
-**Next Milestone:** Job Search Interface Implementation
+**Current Phase:** Phase 2 Core Features in Progress 🚀  
+**Recent Milestone:** Job Search Interface & Saved Searches Complete
+
+#### Highlights
+- Job search, advanced filtering, and saved search features are fully functional
+- Database schema supports jobs, applications, resumes, interview notes, and saved searches
+- UI is responsive and modern, built with shadcn/ui and Tailwind CSS
+- Project is now public on GitHub and ready for collaboration
+
+**Next Milestone:** Application Tracker and Resume Manager UI Implementation
 
 ## Getting Started
 
