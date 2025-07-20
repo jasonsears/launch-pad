@@ -8,6 +8,66 @@ if (!GOOGLE_API_KEY || !GOOGLE_CSE_ID) {
   throw new Error('Missing Google API Key or Custom Search Engine ID in environment variables');
 }
 
+// Helper function to filter search results and ensure they are job-related
+const filterJobResults = (items: Array<{ title?: string; snippet?: string; link?: string }>, originalQuery: string) => {
+  const jobIndicators = [
+    // Job-specific terms
+    'job', 'position', 'career', 'hiring', 'employment', 'vacancy', 'opening',
+    // Common job posting phrases
+    'apply', 'application', 'candidate', 'qualifications', 'requirements',
+    'experience', 'skills', 'responsibilities', 'duties', 'salary', 'benefits',
+    // Action words in job posts
+    'join', 'seeking', 'looking for', 'we are hiring', 'job description',
+    'years of experience', 'full time', 'part time', 'remote', 'onsite'
+  ];
+
+  const nonJobIndicators = [
+    // Content that's definitely not job postings
+    'wikipedia', 'about us', 'our company', 'company history', 'news article',
+    'press release', 'blog post', 'interview with', 'profile of', 'biography',
+    'stock price', 'earnings', 'financial', 'quarterly results', 'investor',
+    // Generic pages
+    'home page', 'contact us', 'privacy policy', 'terms of service', 'cookie policy'
+  ];
+
+  return items.filter(item => {
+    const title = (item.title || '').toLowerCase();
+    const snippet = (item.snippet || '').toLowerCase();
+    const url = (item.link || '').toLowerCase();
+    const combinedText = `${title} ${snippet}`;
+    
+    // Check if the original search query terms appear in the result
+    const queryTerms = originalQuery.toLowerCase().split(' ').filter(term => 
+      term.length > 2 && !['job', 'position', 'career', 'and', 'or', 'the', 'for', 'in', 'at'].includes(term)
+    );
+    
+    const hasQueryTerms = queryTerms.length === 0 || queryTerms.some(term => 
+      combinedText.includes(term) || title.includes(term)
+    );
+    
+    // Must contain job indicators
+    const hasJobIndicators = jobIndicators.some(indicator => 
+      combinedText.includes(indicator) || url.includes(indicator)
+    );
+    
+    // Must not contain non-job indicators
+    const hasNonJobIndicators = nonJobIndicators.some(indicator => 
+      combinedText.includes(indicator) || url.includes(indicator)
+    );
+    
+    // URL-based filtering for known job sites
+    const isFromJobSite = [
+      'linkedin.com/jobs', 'indeed.com', 'glassdoor.com', 'monster.com',
+      'dice.com', 'ziprecruiter.com', 'careerbuilder.com', 'simplyhired.com',
+      'remote.co', 'weworkremotely.com', 'stackoverflow.com/jobs',
+      'angel.co', 'wellfound.com', 'jobs.', 'careers.', '/careers/', '/jobs/'
+    ].some(site => url.includes(site));
+    
+    // Filter logic: must have query terms AND (job indicators OR be from job site) AND not have non-job indicators
+    return hasQueryTerms && (hasJobIndicators || isFromJobSite) && !hasNonJobIndicators;
+  });
+};
+
 export interface JobSearchFilters {
   location?: string;
   remote?: boolean;
@@ -45,12 +105,19 @@ export const searchJobs = async (
     throw new Error('Search query is required');
   }
   
-  // Add job-specific keywords if not already present
-  if (!searchQuery.toLowerCase().includes('job') && 
-      !searchQuery.toLowerCase().includes('career') &&
-      !searchQuery.toLowerCase().includes('position')) {
-    searchQuery += ' job';
+  // Enhanced job-specific keyword construction
+  const jobKeywords = ['job', 'career', 'position', 'opening', 'hiring', 'employment', 'vacancy'];
+  const hasJobKeyword = jobKeywords.some(keyword => 
+    searchQuery.toLowerCase().includes(keyword)
+  );
+  
+  if (!hasJobKeyword) {
+    // Add multiple job-related terms to improve relevance
+    searchQuery += ' (job OR position OR hiring OR career OR opening)';
   }
+  
+  // Add job posting indicators to improve quality
+  searchQuery += ' (apply OR "job description" OR requirements OR qualifications OR "years of experience")';
   
   // Add location filter
   if (filters.location) {
@@ -142,9 +209,12 @@ export const searchJobs = async (
     }
   }
   
-  // Combine the query with site restrictions
-  const finalQuery = searchQuery + sitesQuery;
-
+  // Combine the query with site restrictions and exclusions
+  let finalQuery = searchQuery + sitesQuery;
+  
+  // Add exclusions to filter out non-job content
+  finalQuery += ' -wikipedia -"about us" -"our company" -blog -news -"press release" -"company profile" -investor';
+  
   const params = {
     key: GOOGLE_API_KEY,
     cx: GOOGLE_CSE_ID,
@@ -159,14 +229,20 @@ export const searchJobs = async (
   try {
     const response = await axios.get('https://www.googleapis.com/customsearch/v1', { params });
     
+    // Filter results to ensure they are job-related
+    const filteredItems = response.data.items ? filterJobResults(response.data.items, query) : [];
+    
     return {
       ...response.data,
+      items: filteredItems,
       searchQuery: finalQuery,
       targetSites: useSiteOperator ? (customSites || filters.sites || []) : [],
       config: {
         userTier,
         sitesUsed: useSiteOperator ? (customSites || filters.sites || []).length : 'CSE-configured',
         maxResults,
+        originalCount: response.data.items?.length || 0,
+        filteredCount: filteredItems.length,
       },
     };
   } catch (error) {

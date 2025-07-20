@@ -68,20 +68,21 @@ model Application {
   resumeId     String?
   company      String
   position     String
-  status       ApplicationStatus @default(APPLIED)
-  appliedDate  DateTime
+  status       ApplicationStatus @default(VIEWED)
+  viewedAt     DateTime?         // When the job was first viewed
+  appliedAt    DateTime?         // When the user marked as applied
   responseDate DateTime?
   interviewDate DateTime?
   notes        String?
   source       String?           // Where did you apply (LinkedIn, company site, etc.)
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
-  
+
   job    Job     @relation(fields: [jobId], references: [id], onDelete: Cascade)
   resume Resume? @relation(fields: [resumeId], references: [id])
-  
+
   outreach Outreach[]
-  
+
   @@map("applications")
 }
 
@@ -134,6 +135,8 @@ model DailyTask {
 }
 
 enum ApplicationStatus {
+  VIEWED
+  PLAN_TO_APPLY
   APPLIED
   INTERVIEWING
   TECHNICAL_INTERVIEW

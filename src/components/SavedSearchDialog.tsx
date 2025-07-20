@@ -59,7 +59,7 @@ export function SavedSearchDialog({
         setSearchName(loadedSearch.name);
       }
     }
-  }, [isOpen, mode, loadedSearchId, savedSearches]);
+  }, [isOpen, mode, loadedSearchId]);
 
   const fetchSavedSearches = async () => {
     setLoading(true);

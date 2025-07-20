@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from 'react';
-import { searchJobs, JobSearchFilters, getAvailableJobSites } from '@/lib/googleSearch';
+import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { JobSearchFilters, getAvailableJobSites } from '@/lib/googleSearch';
 import { Navigation } from '@/components/navigation';
 import { SavedSearchDialog } from '@/components/SavedSearchDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,47 +12,183 @@ import { Search, ExternalLink, Bookmark, ArrowLeft, Filter, MapPin, Save, Folder
 import Link from 'next/link';
 
 const JobSearchPage = () => {
-  const [query, setQuery] = useState('');
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  
+  // Helper functions for URL state management
+  const getQueryFromURL = useCallback(() => {
+    return searchParams.get('q') || '';
+  }, [searchParams]);
+
+  const getFiltersFromURL = useCallback((): JobSearchFilters => {
+    const filtersParam = searchParams.get('filters');
+    if (filtersParam) {
+      try {
+        return JSON.parse(filtersParam);
+      } catch {
+        // If parsing fails, return default filters
+      }
+    }
+    return {
+      location: '',
+      remote: false,
+      entryLevel: false,
+      jobType: [],
+      experienceLevel: undefined,
+      sites: [],
+    };
+  }, [searchParams]);
+
+  const getShowFiltersFromURL = useCallback(() => {
+    return searchParams.get('showFilters') === 'true';
+  }, [searchParams]);
+
+  const updateURLState = useCallback((updates: {
+    query?: string;
+    filters?: JobSearchFilters;
+    showFilters?: boolean;
+    replace?: boolean;
+  }) => {
+    const params = new URLSearchParams(searchParams);
+    
+    if (updates.query !== undefined) {
+      if (updates.query) {
+        params.set('q', updates.query);
+      } else {
+        params.delete('q');
+      }
+    }
+    
+    if (updates.filters !== undefined) {
+      // Only store non-default filters to keep URLs clean
+      const hasNonDefaultFilters = Object.values(updates.filters).some(value => {
+        if (Array.isArray(value)) return value.length > 0;
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'string') return value.trim() !== '';
+        return value !== undefined;
+      });
+      
+      if (hasNonDefaultFilters) {
+        params.set('filters', JSON.stringify(updates.filters));
+      } else {
+        params.delete('filters');
+      }
+    }
+    
+    if (updates.showFilters !== undefined) {
+      if (updates.showFilters) {
+        params.set('showFilters', 'true');
+      } else {
+        params.delete('showFilters');
+      }
+    }
+
+    const newURL = `/job-search?${params.toString()}`;
+    if (updates.replace) {
+      router.replace(newURL);
+    } else {
+      router.push(newURL);
+    }
+  }, [searchParams, router]);
+
+  // Initialize state from URL
+  const [query, setQuery] = useState(getQueryFromURL());
+  const [filters, setFilters] = useState<JobSearchFilters>(getFiltersFromURL());
+  const [showFilters, setShowFilters] = useState(getShowFiltersFromURL());
+  
+  // Track saved jobs using sessionStorage for persistence
+  const [savedJobs, setSavedJobs] = useState<{ [url: string]: boolean }>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = sessionStorage.getItem('savedJobs');
+      return saved ? JSON.parse(saved) : {};
+    }
+    return {};
+  });
+  
+  const [savingJob, setSavingJob] = useState<string | null>(null);
   const [results, setResults] = useState<{ link: string; title: string; snippet: string; displayLink: string }[]>([]);
+  const [searchMetadata, setSearchMetadata] = useState<{
+    originalCount?: number;
+    filteredCount?: number;
+    searchQuery?: string;
+  }>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
   const [savedSearchDialog, setSavedSearchDialog] = useState<{ isOpen: boolean; mode: 'save' | 'load' }>({
     isOpen: false,
     mode: 'save'
   });
   const [loadedSearchId, setLoadedSearchId] = useState<string | null>(null);
-  const [filters, setFilters] = useState<JobSearchFilters>({
-    location: '',
-    remote: false,
-    entryLevel: false,
-    jobType: [], // Multi-select array
-    experienceLevel: undefined,
-    sites: [], // For specific job board filtering
-  });
+
+  // Sync state with URL when URL changes (browser back/forward)
+  useEffect(() => {
+    setQuery(getQueryFromURL());
+    setFilters(getFiltersFromURL());
+    setShowFilters(getShowFiltersFromURL());
+  }, [searchParams, getQueryFromURL, getFiltersFromURL, getShowFiltersFromURL]);
+
+  // Persist savedJobs to sessionStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('savedJobs', JSON.stringify(savedJobs));
+    }
+  }, [savedJobs]);
 
   const availableJobSites = getAvailableJobSites();
 
-  const handleSearch = async () => {
+  const handleSearch = useCallback(async () => {
     if (!query.trim()) {
       setError('Please enter a search term');
       return;
     }
     
+    // Update URL with current search state
+    updateURLState({ query, filters, replace: true });
+    
     setLoading(true);
     setError(null);
     try {
-      const data = await searchJobs(query, filters);
+      // Use the API endpoint for better filtering and processing
+      const response = await fetch('/api/search/jobs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query,
+          filters,
+          userId: 'free-user' // Default for now
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Search failed: ${response.status}`);
+      }
+
+      const data = await response.json();
       setResults(data.items || []);
       setSearchQuery(data.searchQuery || query);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch job results. Please try again.';
+      setSearchMetadata({
+        originalCount: data.config?.originalCount,
+        filteredCount: data.config?.filteredCount,
+        searchQuery: data.searchQuery
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to fetch job results. Please try again.';
       setError(errorMessage);
     } finally {
       setLoading(false);
     }
-  };
+  }, [query, filters, updateURLState]);
+
+  // Auto-search when URL has query parameter on initial load
+  useEffect(() => {
+    const urlQuery = getQueryFromURL();
+    if (urlQuery && results.length === 0 && !loading) {
+      handleSearch();
+    }
+  }, [getQueryFromURL, results.length, loading, handleSearch]);
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -59,15 +196,53 @@ const JobSearchPage = () => {
     }
   };
 
+  // Save Job handler
+  const handleSaveJob = async (result: { link: string; title: string; snippet: string; displayLink: string }) => {
+    setSavingJob(result.link);
+    try {
+      // Compose comprehensive job info for API
+      const payload = {
+        jobId: result.link, // Use link as unique jobId for now
+        company: result.displayLink || 'Unknown',
+        position: result.title,
+        source: getJobSiteName(result.displayLink),
+        status: 'VIEWED',
+        jobTitle: result.title,
+        jobSnippet: result.snippet || '',
+        datePosted: new Date().toISOString(), // Current date as fallback
+      };
+      const res = await fetch('/api/applications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        setSavedJobs((prev) => ({ ...prev, [result.link]: true }));
+      } else {
+        // Get more detailed error information
+        const errorData = await res.json();
+        console.error('Failed to save job:', errorData);
+        alert('Failed to save job.');
+      }
+    } catch (error) {
+      console.error('Error saving job:', error);
+      alert('Failed to save job.');
+    } finally {
+      setSavingJob(null);
+    }
+  };
+
   const clearFilters = () => {
-    setFilters({
+    const defaultFilters = {
       location: '',
       remote: false,
       entryLevel: false,
       jobType: [],
       experienceLevel: undefined,
       sites: [],
-    });
+    };
+    setFilters(defaultFilters);
+    updateURLState({ filters: defaultFilters });
   };
 
   const getJobSiteName = (url: string): string => {
@@ -102,6 +277,8 @@ const JobSearchPage = () => {
     // Clear results when loading a different search
     setResults([]);
     setSearchQuery('');
+    // Update URL with loaded search
+    updateURLState({ query: savedSearch.query, filters: savedSearch.filters });
     // Optionally trigger a search automatically
     // handleSearch();
   };
@@ -135,7 +312,11 @@ const JobSearchPage = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setShowFilters(!showFilters)}
+                  onClick={() => {
+                    const newShowFilters = !showFilters;
+                    setShowFilters(newShowFilters);
+                    updateURLState({ showFilters: newShowFilters });
+                  }}
                   className="flex items-center"
                 >
                   <Filter className="w-4 h-4 mr-2" />
@@ -159,17 +340,25 @@ const JobSearchPage = () => {
                       size="sm"
                       onClick={() => {
                         setLoadedSearchId(null);
-                        setQuery('');
-                        setFilters({
+                        const defaultQuery = '';
+                        const defaultFilters = {
                           location: '',
                           remote: false,
                           entryLevel: false,
                           jobType: [],
                           experienceLevel: undefined,
                           sites: [],
-                        });
+                        };
+                        setQuery(defaultQuery);
+                        setFilters(defaultFilters);
                         setResults([]);
                         setSearchQuery('');
+                        // Clear URL state
+                        updateURLState({ 
+                          query: defaultQuery, 
+                          filters: defaultFilters,
+                          replace: true 
+                        });
                       }}
                       className="text-blue-600 hover:text-blue-800"
                     >
@@ -183,7 +372,11 @@ const JobSearchPage = () => {
                 <Input
                   type="text"
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => {
+                    const newQuery = e.target.value;
+                    setQuery(newQuery);
+                    // Don't update URL on every keystroke, only on search
+                  }}
                   onKeyPress={handleKeyPress}
                   placeholder="Enter job title, keywords, or company name (required)"
                   className="flex-1"
@@ -220,7 +413,11 @@ const JobSearchPage = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setFilters({...filters, sites: ['linkedin.com']})}
+                  onClick={() => {
+                    const newFilters = {...filters, sites: ['linkedin.com']};
+                    setFilters(newFilters);
+                    updateURLState({ filters: newFilters });
+                  }}
                   className={filters.sites?.includes('linkedin.com') ? 'bg-blue-100' : ''}
                 >
                   LinkedIn Only
@@ -228,7 +425,11 @@ const JobSearchPage = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setFilters({...filters, sites: ['indeed.com']})}
+                  onClick={() => {
+                    const newFilters = {...filters, sites: ['indeed.com']};
+                    setFilters(newFilters);
+                    updateURLState({ filters: newFilters });
+                  }}
                   className={filters.sites?.includes('indeed.com') ? 'bg-blue-100' : ''}
                 >
                   Indeed Only
@@ -236,7 +437,11 @@ const JobSearchPage = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setFilters({...filters, sites: ['dice.com', 'stackoverflow.com/jobs']})}
+                  onClick={() => {
+                    const newFilters = {...filters, sites: ['dice.com', 'stackoverflow.com/jobs']};
+                    setFilters(newFilters);
+                    updateURLState({ filters: newFilters });
+                  }}
                   className={filters.sites?.some(site => ['dice.com', 'stackoverflow.com/jobs'].includes(site)) ? 'bg-blue-100' : ''}
                 >
                   Tech Sites
@@ -244,7 +449,11 @@ const JobSearchPage = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setFilters({...filters, sites: ['remote.co', 'weworkremotely.com']})}
+                  onClick={() => {
+                    const newFilters = {...filters, sites: ['remote.co', 'weworkremotely.com']};
+                    setFilters(newFilters);
+                    updateURLState({ filters: newFilters });
+                  }}
                   className={filters.sites?.some(site => ['remote.co', 'weworkremotely.com'].includes(site)) ? 'bg-blue-100' : ''}
                 >
                   Remote Sites
@@ -252,7 +461,11 @@ const JobSearchPage = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setFilters({...filters, sites: []})}
+                  onClick={() => {
+                    const newFilters = {...filters, sites: []};
+                    setFilters(newFilters);
+                    updateURLState({ filters: newFilters });
+                  }}
                   className={!filters.sites || filters.sites.length === 0 ? 'bg-blue-100' : ''}
                 >
                   All Sites
@@ -270,7 +483,12 @@ const JobSearchPage = () => {
                       <Input
                         type="text"
                         value={filters.location || ''}
-                        onChange={(e) => setFilters({...filters, location: e.target.value})}
+                        onChange={(e) => {
+                          const newFilters = {...filters, location: e.target.value};
+                          setFilters(newFilters);
+                          // Update URL immediately for location changes
+                          updateURLState({ filters: newFilters });
+                        }}
                         placeholder="e.g., San Francisco, CA"
                       />
                     </div>
@@ -280,7 +498,11 @@ const JobSearchPage = () => {
                       </label>
                       <select
                         value={filters.experienceLevel || ''}
-                        onChange={(e) => setFilters({...filters, experienceLevel: e.target.value as JobSearchFilters['experienceLevel']})}
+                        onChange={(e) => {
+                          const newFilters = {...filters, experienceLevel: e.target.value as JobSearchFilters['experienceLevel']};
+                          setFilters(newFilters);
+                          updateURLState({ filters: newFilters });
+                        }}
                         className="w-full p-2 border border-slate-200 rounded-md"
                       >
                         <option value="">Any Level</option>
@@ -306,17 +528,17 @@ const JobSearchPage = () => {
                               checked={filters.jobType?.includes(jobType.value) || false}
                               onChange={(e) => {
                                 const currentTypes = filters.jobType || [];
-                                if (e.target.checked) {
-                                  setFilters({
-                                    ...filters, 
-                                    jobType: [...currentTypes, jobType.value]
-                                  });
-                                } else {
-                                  setFilters({
-                                    ...filters, 
-                                    jobType: currentTypes.filter(t => t !== jobType.value)
-                                  });
-                                }
+                                const newFilters = e.target.checked
+                                  ? {
+                                      ...filters, 
+                                      jobType: [...currentTypes, jobType.value]
+                                    }
+                                  : {
+                                      ...filters, 
+                                      jobType: currentTypes.filter(t => t !== jobType.value)
+                                    };
+                                setFilters(newFilters);
+                                updateURLState({ filters: newFilters });
                               }}
                               className="mr-2"
                             />
@@ -348,17 +570,17 @@ const JobSearchPage = () => {
                             checked={filters.sites?.includes(site.domain) || false}
                             onChange={(e) => {
                               const currentSites = filters.sites || [];
-                              if (e.target.checked) {
-                                setFilters({
-                                  ...filters, 
-                                  sites: [...currentSites, site.domain]
-                                });
-                              } else {
-                                setFilters({
-                                  ...filters, 
-                                  sites: currentSites.filter(s => s !== site.domain)
-                                });
-                              }
+                              const newFilters = e.target.checked
+                                ? {
+                                    ...filters, 
+                                    sites: [...currentSites, site.domain]
+                                  }
+                                : {
+                                    ...filters, 
+                                    sites: currentSites.filter(s => s !== site.domain)
+                                  };
+                              setFilters(newFilters);
+                              updateURLState({ filters: newFilters });
                             }}
                             className="mr-2"
                           />
@@ -393,7 +615,11 @@ const JobSearchPage = () => {
                       <input
                         type="checkbox"
                         checked={filters.remote || false}
-                        onChange={(e) => setFilters({...filters, remote: e.target.checked})}
+                        onChange={(e) => {
+                          const newFilters = {...filters, remote: e.target.checked};
+                          setFilters(newFilters);
+                          updateURLState({ filters: newFilters });
+                        }}
                         className="mr-2"
                       />
                       Remote jobs only
@@ -402,7 +628,11 @@ const JobSearchPage = () => {
                       <input
                         type="checkbox"
                         checked={filters.entryLevel || false}
-                        onChange={(e) => setFilters({...filters, entryLevel: e.target.checked})}
+                        onChange={(e) => {
+                          const newFilters = {...filters, entryLevel: e.target.checked};
+                          setFilters(newFilters);
+                          updateURLState({ filters: newFilters });
+                        }}
                         className="mr-2"
                       />
                       Entry level friendly
@@ -427,6 +657,13 @@ const JobSearchPage = () => {
                 <p className="text-sm text-blue-700">
                   <strong>Search query used:</strong> {searchQuery}
                 </p>
+                {searchMetadata.originalCount !== undefined && searchMetadata.filteredCount !== undefined && (
+                  <p className="text-sm text-blue-600 mt-1">
+                    Found {searchMetadata.originalCount} results, showing {searchMetadata.filteredCount} job-related matches
+                    {searchMetadata.originalCount > searchMetadata.filteredCount && 
+                      ` (filtered out ${searchMetadata.originalCount - searchMetadata.filteredCount} non-job results)`}
+                  </p>
+                )}
               </CardContent>
             </Card>
           )}
@@ -501,13 +738,19 @@ const JobSearchPage = () => {
                               View Job
                             </Button>
                           </a>
-                          <Button 
-                            variant="outline" 
+                          <Button
+                            variant={savedJobs[result.link] ? 'secondary' : 'outline'}
                             size="sm"
                             className="inline-flex items-center"
+                            onClick={() => handleSaveJob(result)}
+                            disabled={!!savedJobs[result.link] || savingJob === result.link}
                           >
                             <Bookmark className="w-4 h-4 mr-2" />
-                            Save Job
+                            {savedJobs[result.link]
+                              ? 'Saved'
+                              : savingJob === result.link
+                                ? 'Saving...'
+                                : 'Save Job'}
                           </Button>
                         </div>
                       </div>
@@ -523,13 +766,20 @@ const JobSearchPage = () => {
             <Card>
               <CardContent className="pt-6 text-center">
                 <Search className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-slate-900 mb-2">No jobs found</h3>
+                <h3 className="text-lg font-medium text-slate-900 mb-2">No relevant job postings found</h3>
                 <p className="text-slate-600 mb-4">
-                  Try adjusting your search terms or filters, or try a different query.
+                  We filtered out non-job results but couldn&apos;t find job postings matching &quot;{query}&quot;.
                 </p>
-                <p className="text-sm text-slate-500">
-                  Make sure your Google Custom Search Engine is configured to search job sites.
-                </p>
+                <div className="text-sm text-slate-500 space-y-2">
+                  <p><strong>Try these suggestions:</strong></p>
+                  <ul className="list-disc list-inside space-y-1 text-left max-w-md mx-auto">
+                    <li>Use more specific job titles (e.g., &quot;Software Engineer&quot; instead of &quot;Tech&quot;)</li>
+                    <li>Include relevant skills or technologies</li>
+                    <li>Try broader terms or remove location filters</li>
+                    <li>Check if your search terms appear in typical job descriptions</li>
+                  </ul>
+                  <p className="mt-4">Make sure your Google Custom Search Engine is configured to search job sites.</p>
+                </div>
               </CardContent>
             </Card>
           )}
