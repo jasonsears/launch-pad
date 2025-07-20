@@ -1,0 +1,163 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  id          String   @id @default(cuid())
+  title       String
+  company     String
+  location    String?
+  description String?
+  source      String
+  url         String
+  datePosted  DateTime
+  isRemote    Boolean  @default(false)
+  isBookmarked Boolean @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  applications Application[]
+  interviewNotes InterviewNote[]
+  
+  @@map("jobs")
+}
+
+model SavedSearch {
+  id          String   @id @default(cuid())
+  name        String
+  query       String
+  filters     String   // JSON string of JobSearchFilters
+  userId      String?  // For future user authentication
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lastUsedAt  DateTime @default(now())
+  useCount    Int      @default(0)
+  
+  @@map("saved_searches")
+}
+
+model Resume {
+  id            String   @id @default(cuid())
+  title         String
+  fileName      String
+  filePath      String
+  version       Int      @default(1)
+  targetPosition String?
+  content       String?  // Store text content for searching
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  applications Application[]
+  
+  @@map("resumes")
+}
+
+model Application {
+  id           String            @id @default(cuid())
+  jobId        String
+  resumeId     String?
+  company      String
+  position     String
+  status       ApplicationStatus @default(APPLIED)
+  appliedDate  DateTime
+  responseDate DateTime?
+  interviewDate DateTime?
+  notes        String?
+  source       String?           // Where did you apply (LinkedIn, company site, etc.)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  
+  job    Job     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  resume Resume? @relation(fields: [resumeId], references: [id])
+  
+  outreach Outreach[]
+  
+  @@map("applications")
+}
+
+model Outreach {
+  id            String      @id @default(cuid())
+  applicationId String
+  contactName   String?
+  contactTitle  String?
+  method        String      // Email, LinkedIn, Phone, etc.
+  date          DateTime
+  type          OutreachType
+  notes         String?
+  response      String?
+  responseDate  DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  
+  @@map("outreach")
+}
+
+model InterviewNote {
+  id           String   @id @default(cuid())
+  jobId        String
+  title        String
+  content      String
+  questions    String?  // Common interview questions for this role
+  preparation  String?  // Your preparation notes
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  
+  @@map("interview_notes")
+}
+
+model DailyTask {
+  id          String     @id @default(cuid())
+  title       String
+  description String?
+  type        TaskType
+  isCompleted Boolean    @default(false)
+  dueDate     DateTime
+  completedAt DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  @@map("daily_tasks")
+}
+
+enum ApplicationStatus {
+  APPLIED
+  INTERVIEWING
+  TECHNICAL_INTERVIEW
+  FINAL_INTERVIEW
+  OFFER
+  REJECTED
+  GHOSTED
+  WITHDRAWN
+}
+
+enum OutreachType {
+  INITIAL_CONTACT
+  FOLLOW_UP
+  THANK_YOU
+  CHECK_IN
+  NETWORKING
+}
+
+enum TaskType {
+  APPLICATION
+  FOLLOW_UP
+  RESUME_UPDATE
+  INTERVIEW_PREP
+  NETWORKING
+  SKILL_DEVELOPMENT
+  JOB_SEARCH
+}
