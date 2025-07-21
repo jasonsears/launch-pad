@@ -26,25 +26,27 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       withExclusions: {
-        totalResults: withExclusions.searchInformation?.totalResults || '0',
-        resultsCount: withExclusions.items?.length || 0,
-        searchQuery: withExclusions.searchQuery,
-        originalCount: withExclusions.config?.originalCount || 0,
-        filteredCount: withExclusions.config?.filteredCount || 0
+        totalResults: (withExclusions.data as any)?.searchInformation?.totalResults || '0',
+        resultsCount: (withExclusions.data as any)?.items?.length || 0,
+        searchQuery: (withExclusions.data as any)?.context?.finalQuery,
+        originalCount: (withExclusions.data as any)?.context?.config?.originalCount || 0,
+        filteredCount: (withExclusions.data as any)?.context?.resultsFiltered || 0
       },
       ...(withoutExclusions && {
         withoutExclusions: {
-          totalResults: withoutExclusions.searchInformation?.totalResults || '0',
-          resultsCount: withoutExclusions.items?.length || 0,
-          searchQuery: withoutExclusions.searchQuery,
-          originalCount: withoutExclusions.config?.originalCount || 0,
-          filteredCount: withoutExclusions.config?.filteredCount || 0
+          totalResults: (withoutExclusions.data as any)?.searchInformation?.totalResults || '0',
+          resultsCount: (withoutExclusions.data as any)?.items?.length || 0,
+          searchQuery: (withoutExclusions.data as any)?.context?.finalQuery,
+          originalCount: (withoutExclusions.data as any)?.context?.config?.originalCount || 0,
+          filteredCount: (withoutExclusions.data as any)?.context?.resultsFiltered || 0
         }
       }),
-      comparison: withoutExclusions ? {
-        resultsDifference: (withoutExclusions.items?.length || 0) - (withExclusions.items?.length || 0),
-        totalResultsDifference: parseInt(withoutExclusions.searchInformation?.totalResults || '0') - parseInt(withExclusions.searchInformation?.totalResults || '0')
-      } : null
+      ...(withoutExclusions && {
+        comparison: {
+          resultsDifference: ((withoutExclusions.data as any)?.items?.length || 0) - ((withExclusions.data as any)?.items?.length || 0),
+          totalResultsDifference: parseInt((withoutExclusions.data as any)?.searchInformation?.totalResults || '0') - parseInt((withExclusions.data as any)?.searchInformation?.totalResults || '0')
+        }
+      })
     });
 
   } catch (error) {

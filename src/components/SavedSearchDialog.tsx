@@ -7,18 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { X, Search, Star, Calendar, TrendingUp } from 'lucide-react';
 import { JobSearchFilters } from '@/lib/googleSearch';
-
-interface SavedSearch {
-  id: string;
-  name: string;
-  query: string;
-  filters: JobSearchFilters;
-  isDefault: boolean;
-  useCount: number;
-  lastUsedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
+import { SavedSearch } from '@/types';
 
 interface SavedSearchDialogProps {
   isOpen: boolean;
@@ -26,6 +15,7 @@ interface SavedSearchDialogProps {
   onSaveSearch?: (name: string, query: string, filters: JobSearchFilters) => void;
   onUpdateSearch?: (id: string, name: string, query: string, filters: JobSearchFilters) => void;
   onLoadSearch?: (search: SavedSearch) => void;
+  onEditSearch?: (search: SavedSearch) => void;
   currentQuery?: string;
   currentFilters?: JobSearchFilters;
   loadedSearchId?: string; // ID of the currently loaded search
@@ -38,6 +28,7 @@ export function SavedSearchDialog({
   onSaveSearch,
   onUpdateSearch,
   onLoadSearch,
+  onEditSearch,
   currentQuery = '',
   currentFilters = {},
   loadedSearchId,
@@ -52,14 +43,17 @@ export function SavedSearchDialog({
     if (isOpen && mode === 'load') {
       fetchSavedSearches();
     }
-    if (isOpen && mode === 'save' && loadedSearchId) {
+  }, [isOpen, mode]);
+
+  useEffect(() => {
+    if (isOpen && mode === 'save' && loadedSearchId && savedSearches.length > 0) {
       // Pre-populate the name field when updating an existing search
       const loadedSearch = savedSearches.find(s => s.id === loadedSearchId);
       if (loadedSearch) {
         setSearchName(loadedSearch.name);
       }
     }
-  }, [isOpen, mode, loadedSearchId]);
+  }, [isOpen, mode, loadedSearchId, savedSearches]);
 
   const fetchSavedSearches = async () => {
     setLoading(true);
@@ -147,6 +141,11 @@ export function SavedSearchDialog({
     }
   };
 
+  const handleEditSearch = (search: SavedSearch) => {
+    onEditSearch?.(search);
+    onClose();
+  };
+
   const handleDeleteSearch = async (searchId: string) => {
     try {
       const response = await fetch(`/api/saved-searches?id=${searchId}`, {
@@ -163,20 +162,17 @@ export function SavedSearchDialog({
 
   const formatFilters = (filters: JobSearchFilters) => {
     const filterLabels = [];
-    if (filters.jobType?.length) {
-      filterLabels.push(`${filters.jobType.length} job type${filters.jobType.length > 1 ? 's' : ''}`);
+    if (filters.jobType) {
+      filterLabels.push(`${filters.jobType} jobs`);
     }
-    if (filters.sites?.length) {
-      filterLabels.push(`${filters.sites.length} site${filters.sites.length > 1 ? 's' : ''}`);
+    if (filters.selectedSites?.length) {
+      filterLabels.push(`${filters.selectedSites.length} site${filters.selectedSites.length > 1 ? 's' : ''}`);
     }
     if (filters.experienceLevel) {
       filterLabels.push(`${filters.experienceLevel} level`);
     }
     if (filters.location) {
       filterLabels.push(`in ${filters.location}`);
-    }
-    if (filters.remote) {
-      filterLabels.push('remote');
     }
     return filterLabels.join(', ');
   };
@@ -313,12 +309,21 @@ export function SavedSearchDialog({
                           </div>
                         </div>
                         
-                        <Button
-                          className="w-full mt-3"
-                          onClick={() => handleLoadSearch(search)}
-                        >
-                          Load Search
-                        </Button>
+                        <div className="flex gap-2 mt-3">
+                          <Button
+                            className="flex-1"
+                            onClick={() => handleLoadSearch(search)}
+                          >
+                            Load Search
+                          </Button>
+                          <Button
+                            variant="outline"
+                            className="flex-1"
+                            onClick={() => handleEditSearch(search)}
+                          >
+                            Edit
+                          </Button>
+                        </div>
                       </CardContent>
                     </Card>
                   ))}

@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
     if (requestedSites.length > 0) {
       // For SaaS, you might want to validate that user can access these sites
       const allowedSites = requestedSites; // Add validation logic here
-      filters.sites = allowedSites;
+      filters.selectedSites = allowedSites;
     }
 
     // Perform the search

@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Filter, Save, X } from 'lucide-react';
 import Link from 'next/link';
+import { SavedSearch } from '@/types';
 
 interface SearchResults {
   items?: Array<{
@@ -56,6 +57,7 @@ const JobSearchPage = () => {
   // Data state
   const [savedApplications, setSavedApplications] = useState<SavedApplication[]>([]);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [showLoadDialog, setShowLoadDialog] = useState(false);
 
   // Load saved applications
   useEffect(() => {
@@ -135,11 +137,34 @@ const JobSearchPage = () => {
     });
   };
 
+  // Handle updating existing saved search
+  const handleUpdateSearchFromDialog = (id: string, name: string, searchQuery: string, searchFilters: JobSearchFilters) => {
+    // Update the current form with the updated search
+    updateQuery(searchQuery);
+    updateFilters(searchFilters);
+    console.log('✅ Search updated successfully');
+  };
+
   // Handle loading saved search
   const handleLoadSearch = () => {
-    // This would typically open a dialog to select from saved searches
-    // For now, we'll just log that it was called
-    console.log('Load search requested');
+    setShowLoadDialog(true);
+  };
+
+  // Handle when a saved search is selected
+  const handleLoadSearchFromDialog = (search: SavedSearch) => {
+    updateQuery(search.query);
+    updateFilters(search.filters);
+    setLoadedSearchId(search.id);
+    setShowLoadDialog(false);
+  };
+
+  // Handle when a saved search is selected for editing
+  const handleEditSearchFromDialog = (search: SavedSearch) => {
+    updateQuery(search.query);
+    updateFilters(search.filters);
+    setLoadedSearchId(search.id);
+    setShowLoadDialog(false);
+    setShowSaveDialog(true); // Open save dialog in edit mode
   };
 
   // Handle saving application
@@ -337,9 +362,25 @@ const JobSearchPage = () => {
           isOpen={showSaveDialog}
           onClose={() => setShowSaveDialog(false)}
           onSaveSearch={handleSaveSearchFromDialog}
+          onUpdateSearch={handleUpdateSearchFromDialog}
           currentQuery={query}
           currentFilters={filters}
+          loadedSearchId={loadedSearchId || undefined}
           mode="save"
+        />
+      )}
+
+      {/* Load Search Dialog */}
+      {showLoadDialog && (
+        <SavedSearchDialog
+          isOpen={showLoadDialog}
+          onClose={() => setShowLoadDialog(false)}
+          onLoadSearch={handleLoadSearchFromDialog}
+          onEditSearch={handleEditSearchFromDialog}
+          currentQuery={query}
+          currentFilters={filters}
+          mode="load"
+          loadedSearchId={loadedSearchId || undefined}
         />
       )}
     </div>

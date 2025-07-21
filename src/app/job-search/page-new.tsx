@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { JobSearchFilters, getAvailableJobSites, searchJobs } from '@/lib/googleSearch';
+import { JobSearchFilters, searchJobs } from '@/lib/googleSearch';
 import { Navigation } from '@/components/navigation';
 import { JobSearchForm } from '@/components/JobSearchForm';
 import { JobSearchFiltersPanel } from '@/components/JobSearchFiltersPanel';
@@ -12,13 +12,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Filter, Save, X } from 'lucide-react';
 import Link from 'next/link';
-
-interface JobSite {
-  domain: string;
-  name: string;
-  category: string;
-  enabled: boolean;
-}
 
 interface SavedApplication {
   id: number;
@@ -57,16 +50,13 @@ const JobSearchPage = () => {
   const [error, setError] = useState<string | null>(null);
 
   // Data state
-  const [availableJobSites, setAvailableJobSites] = useState<JobSite[]>([]);
   const [savedApplications, setSavedApplications] = useState<SavedApplication[]>([]);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
 
-  // Load available job sites and saved applications
+  // Load saved applications
   useEffect(() => {
     const loadData = async () => {
       try {
-        const sites = await getAvailableJobSites();
-        setAvailableJobSites(sites);
 
         // Load saved applications
         const response = await fetch('/api/applications');
@@ -138,6 +128,15 @@ const JobSearchPage = () => {
     // This would typically open a dialog to select from saved searches
     // For now, we'll just log that it was called
     console.log('Load search requested');
+  };
+
+  // Wrapper to match SavedSearchDialog interface
+  const handleSaveSearchFromDialog = (name: string, query: string, filters: JobSearchFilters) => {
+    return handleSaveSearchSubmit({
+      name,
+      query,
+      filters
+    });
   };
 
   // Handle saving application
@@ -264,7 +263,7 @@ const JobSearchPage = () => {
             loading={isLoading}
             onSaveSearch={handleSaveSearch}
             onLoadSearch={handleLoadSearch}
-            loadedSearchId={loadedSearchId}
+            loadedSearchId={loadedSearchId || undefined}
             onClearLoadedSearch={handleClearLoadedSearch}
           />
         </div>
@@ -303,7 +302,7 @@ const JobSearchPage = () => {
                   <JobSearchFiltersPanel
                     filters={filters}
                     onFiltersChange={handleFiltersChange}
-                    availableJobSites={availableJobSites}
+                    onClearFilters={clearFilters}
                   />
                 </CardContent>
               </Card>
@@ -329,9 +328,10 @@ const JobSearchPage = () => {
         <SavedSearchDialog
           isOpen={showSaveDialog}
           onClose={() => setShowSaveDialog(false)}
-          onSaveSearch={handleSaveSearchSubmit}
-          initialQuery={query}
-          initialFilters={filters}
+          onSaveSearch={handleSaveSearchFromDialog}
+          currentQuery={query}
+          currentFilters={filters}
+          mode="save"
         />
       )}
     </div>

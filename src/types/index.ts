@@ -1,9 +1,15 @@
-export interface JobSearchFilters {
-  keywords: string
-  location: string
-  remote: boolean
-  entryLevel: boolean
-  datePosted?: 'day' | 'week' | 'month'
+import { JobSearchFilters } from '@/lib/googleSearch';
+
+export interface SavedSearch {
+  id: string;
+  name: string;
+  query: string;
+  filters: JobSearchFilters;
+  isDefault: boolean;
+  useCount: number;
+  lastUsedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface JobResult {
