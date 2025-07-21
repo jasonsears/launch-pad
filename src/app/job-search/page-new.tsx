@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { JobSearchFilters, searchJobs } from '@/lib/googleSearch';
+import { JobSearchFilters, getAvailableJobSites, searchJobs } from '@/lib/googleSearch';
 import { Navigation } from '@/components/navigation';
 import { JobSearchForm } from '@/components/JobSearchForm';
 import { JobSearchFiltersPanel } from '@/components/JobSearchFiltersPanel';
@@ -13,17 +13,11 @@ import { Button } from '@/components/ui/button';
 import { ArrowLeft, Filter, Save, X } from 'lucide-react';
 import Link from 'next/link';
 
-interface SearchResults {
-  items?: Array<{
-    link: string;
-    title: string;
-    snippet: string;
-    displayLink: string;
-  }>;
-  searchInformation?: {
-    totalResults: string;
-    searchTime: number;
-  };
+interface JobSite {
+  domain: string;
+  name: string;
+  category: string;
+  enabled: boolean;
 }
 
 interface SavedApplication {
@@ -32,6 +26,14 @@ interface SavedApplication {
   company: string;
   url: string;
   status: string;
+}
+
+interface SavedSearch {
+  id: string;
+  name: string;
+  query: string;
+  filters: JobSearchFilters;
+  description?: string;
 }
 
 const JobSearchPage = () => {
@@ -45,22 +47,27 @@ const JobSearchPage = () => {
     updateQuery,
     updateFilters,
     updateShowFilters,
-    clearFilters
+    clearFilters,
+    resetForm
   } = useJobSearchForm();
 
   // Search state
   const [isLoading, setIsLoading] = useState(false);
-  const [results, setResults] = useState<SearchResults | null>(null);
+  const [results, setResults] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Data state
+  const [availableJobSites, setAvailableJobSites] = useState<JobSite[]>([]);
   const [savedApplications, setSavedApplications] = useState<SavedApplication[]>([]);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
 
-  // Load saved applications
+  // Load available job sites and saved applications
   useEffect(() => {
     const loadData = async () => {
       try {
+        const sites = await getAvailableJobSites();
+        setAvailableJobSites(sites);
+
         // Load saved applications
         const response = await fetch('/api/applications');
         if (response.ok) {
@@ -85,7 +92,7 @@ const JobSearchPage = () => {
     try {
       const searchResults = await searchJobs(query, filters);
       if (searchResults.success) {
-        setResults(searchResults.data as SearchResults);
+        setResults(searchResults.data);
       } else {
         setError(searchResults.error?.message || 'Search failed');
       }
@@ -126,15 +133,6 @@ const JobSearchPage = () => {
     }
   };
 
-  // Wrapper to match SavedSearchDialog interface
-  const handleSaveSearchFromDialog = (name: string, searchQuery: string, searchFilters: JobSearchFilters) => {
-    handleSaveSearchSubmit({
-      name,
-      query: searchQuery,
-      filters: searchFilters
-    });
-  };
-
   // Handle loading saved search
   const handleLoadSearch = () => {
     // This would typically open a dialog to select from saved searches
@@ -143,12 +141,7 @@ const JobSearchPage = () => {
   };
 
   // Handle saving application
-  const handleSaveApplication = async (item: {
-    title: string;
-    link: string;
-    snippet: string;
-    displayLink: string;
-  }) => {
+  const handleSaveApplication = async (item: any) => {
     try {
       const applicationData = {
         jobTitle: item.title,
@@ -271,7 +264,7 @@ const JobSearchPage = () => {
             loading={isLoading}
             onSaveSearch={handleSaveSearch}
             onLoadSearch={handleLoadSearch}
-            loadedSearchId={loadedSearchId || undefined}
+            loadedSearchId={loadedSearchId}
             onClearLoadedSearch={handleClearLoadedSearch}
           />
         </div>
@@ -310,7 +303,7 @@ const JobSearchPage = () => {
                   <JobSearchFiltersPanel
                     filters={filters}
                     onFiltersChange={handleFiltersChange}
-                    onClearFilters={clearFilters}
+                    availableJobSites={availableJobSites}
                   />
                 </CardContent>
               </Card>
@@ -336,10 +329,9 @@ const JobSearchPage = () => {
         <SavedSearchDialog
           isOpen={showSaveDialog}
           onClose={() => setShowSaveDialog(false)}
-          onSaveSearch={handleSaveSearchFromDialog}
-          currentQuery={query}
-          currentFilters={filters}
-          mode="save"
+          onSaveSearch={handleSaveSearchSubmit}
+          initialQuery={query}
+          initialFilters={filters}
         />
       )}
     </div>
